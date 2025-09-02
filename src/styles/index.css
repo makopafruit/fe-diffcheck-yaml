@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Core layout vars */
+:root {
+  --header-h: 64px;
+  --sidenav-w: 220px;
+
+  /* Page gutters (left/right padding applied to header + page wrapper) */
+  /* Mode A (Full-bleed): small gutters */
+  --page-gutter: 16px; /* tweak to 12–24px if you like */
+
+  /* If you want Mode B (Wide-centered), comment the line above
+     and uncomment the line below for big responsive gutters: */
+  /* --page-gutter: clamp(32px, 6vw, 96px); */
+}
+
+/* Respect users pref for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
