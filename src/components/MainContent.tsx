@@ -80,7 +80,7 @@ function CascadingFilters({
       "kyc-verify6",
       "kyc-verify7",
       "kyc-verify8",
-      "kyc-verify9",
+      "kyc-verify9"
     ];
     return names.map((n) => ({ value: n, label: n }));
   }, [parentsChosen]);
