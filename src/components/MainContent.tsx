@@ -1,6 +1,7 @@
 import * as React from "react";
 import Dropdown from "../components/ui/Dropdown";
 import SearchableDropdown from "./ui/SearchableDropdown";
+import { useApic } from "../hooks/useApic";
 
 /* ---------- Shared types & data (defined once) ---------- */
 type ApicVersion = "" | "v5" | "v10";
@@ -49,6 +50,12 @@ function CascadingFilters({
   const [environment, setEnvironment] = React.useState<Environment>("");
   const [catalog, setCatalog] = React.useState<Catalog>("");
   const [apiName, setApiName] = React.useState("");
+  const { data, isLoading, error } = useApic({
+     version: apicVersion,
+    environment,
+    catalog,
+  });
+
 
   const parentsChosen = Boolean(apicVersion && environment && catalog);
 
@@ -66,24 +73,15 @@ function CascadingFilters({
   // Sample API names — replace with fetch(/apis?version=...&env=...&catalog=...)
   const apiNameOptions = React.useMemo(() => {
     if (!parentsChosen) return [];
-    const names = [
-      "customer-profile",
-      "payments-core",
-      "kyc-verify",
-      "customer-profile1",
-      "payments-core1",
-      "kyc-verify1",
-      "kyc-verify2",
-      "kyc-verify3",
-      "kyc-verify4",
-      "kyc-verify5",
-      "kyc-verify6",
-      "kyc-verify7",
-      "kyc-verify8",
-      "kyc-verify9"
-    ];
-    return names.map((n) => ({ value: n, label: n }));
-  }, [parentsChosen]);
+    const apiList = data || []
+    return apiList?.map((n) => ({ value: n.title, label: n.description }));
+  }, [parentsChosen, data]);
+
+  const apiNamePlaceholder = !parentsChosen
+  ? "Select version/env/catalog first…"
+  : isLoading
+  ? "Searching…"
+  : "Search API name…";
 
   // Cascading resets
   const onChangeVersion = (v: ApicVersion) => {
@@ -163,13 +161,14 @@ function CascadingFilters({
             value={apiName}
             onChange={setApiName}
             options={apiNameOptions}
-            placeholder={
-              parentsChosen
-                ? "Search API name…"
-                : "Select version/env/catalog first…"
-            }
-            disabled={!parentsChosen}
+            placeholder={apiNamePlaceholder}
+            disabled={!parentsChosen || isLoading}
           />
+          {error && (
+            <p className="mt-1 text-xs text-red-600">
+              {(error as Error).message}
+            </p>
+          )}
         </div>
       </div>
 
