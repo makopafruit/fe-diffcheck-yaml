@@ -2,6 +2,7 @@ import * as React from "react";
 import Dropdown from "../components/ui/Dropdown";
 import SearchableDropdown from "./ui/SearchableDropdown";
 import { useApic } from "../hooks/useApic";
+import { useApiDetail } from "../hooks/useApiDetails";
 
 /* ---------- Shared types & data (defined once) ---------- */
 type ApicVersion = "" | "v5" | "v10";
@@ -38,25 +39,59 @@ const CATALOGS_BY_VERSION_ENV: Readonly<
   },
 } as const;
 
-/* ---------- Reusable cascading filter bar ---------- */
+/* ---------- Types for controlled data ---------- */
+type ApiItem =  {
+  id: string;
+  info: {
+    "x-ibm-name": string;
+    title: string;
+    version: string;
+  };
+}
+
+type CascadingFiltersProps = {
+  title: string;
+  idPrefix: string;
+
+  // Controlled values (come from MainContent)
+  apicVersion: ApicVersion;
+  environment: Environment;
+  catalog: Catalog;
+  /** Holds the selected API **id** (not the title). */
+  apiName: string;
+  yaml: string;
+
+  // Data/loading/error derived in MainContent
+  apis: ReadonlyArray<ApiItem> | undefined;
+  isLoading: boolean;
+  error: unknown;
+
+  // Updaters from MainContent (handle cascading resets there)
+  onChangeVersion: (v: ApicVersion) => void;
+  onChangeEnvironment: (e: Environment) => void;
+  onChangeCatalog: (c: Catalog) => void;
+  onChangeApiName: (name: string) => void;
+  onChangeYaml: (yaml: string) => void;
+};
+
+/* ---------- Reusable cascading filter bar (STATELESS) ---------- */
 function CascadingFilters({
   title,
   idPrefix,
-}: {
-  title: string;
-  idPrefix: string; // helps keep labels/ids unique per side
-}) {
-  const [apicVersion, setApicVersion] = React.useState<ApicVersion>("");
-  const [environment, setEnvironment] = React.useState<Environment>("");
-  const [catalog, setCatalog] = React.useState<Catalog>("");
-  const [apiName, setApiName] = React.useState("");
-  const { data, isLoading, error } = useApic({
-     version: apicVersion,
-    environment,
-    catalog,
-  });
-
-
+  apicVersion,
+  environment,
+  catalog,
+  apiName,
+  yaml,
+  apis,
+  isLoading,
+  error,
+  onChangeVersion,
+  onChangeEnvironment,
+  onChangeCatalog,
+  onChangeApiName,
+  onChangeYaml,
+}: CascadingFiltersProps) {
   const parentsChosen = Boolean(apicVersion && environment && catalog);
 
   const environmentOptions = React.useMemo(() => {
@@ -70,35 +105,19 @@ function CascadingFilters({
     return (byEnv ?? []).map((c) => ({ value: c, label: c }));
   }, [apicVersion, environment]);
 
-  // Sample API names — replace with fetch(/apis?version=...&env=...&catalog=...)
   const apiNameOptions = React.useMemo(() => {
-    if (!parentsChosen) return [];
-    const apiList = data || []
-    return apiList?.map((n) => ({ value: n.title, label: n.description }));
-  }, [parentsChosen, data]);
+    if (!parentsChosen || !apis?.length) return [];
+    return apis.map((api) => ({
+      value: api.id, // store id
+      label: `${api.info.title} ${api.info.version}`,
+    }));
+  }, [parentsChosen, apis]);
 
   const apiNamePlaceholder = !parentsChosen
-  ? "Select version/env/catalog first…"
-  : isLoading
-  ? "Searching…"
-  : "Search API name…";
-
-  // Cascading resets
-  const onChangeVersion = (v: ApicVersion) => {
-    setApicVersion(v);
-    setEnvironment("");
-    setCatalog("");
-    setApiName("");
-  };
-  const onChangeEnvironment = (e: Environment) => {
-    setEnvironment(e);
-    setCatalog("");
-    setApiName("");
-  };
-  const onChangeCatalog = (c: Catalog) => {
-    setCatalog(c);
-    setApiName("");
-  };
+    ? "Select version/env/catalog first…"
+    : isLoading
+    ? "Searching…"
+    : "Search API name…";
 
   return (
     <div className="flex flex-col gap-2">
@@ -159,14 +178,14 @@ function CascadingFilters({
           <SearchableDropdown
             id={`${idPrefix}-api-name`}
             value={apiName}
-            onChange={setApiName}
+            onChange={onChangeApiName}
             options={apiNameOptions}
             placeholder={apiNamePlaceholder}
             disabled={!parentsChosen || isLoading}
           />
           {error && (
             <p className="mt-1 text-xs text-red-600">
-              {(error as Error).message}
+              {(error as Error)?.message ?? "Failed to load APIs."}
             </p>
           )}
         </div>
@@ -176,6 +195,8 @@ function CascadingFilters({
         id={`${idPrefix}-yaml`}
         placeholder={`Paste YAML (${title.toLowerCase()})`}
         className="min-h-[40dvh] w-full resize-y rounded-lg border border-gray-200 bg-white p-3 font-mono text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+        value={yaml}
+        onChange={(e) => onChangeYaml(e.target.value)}
       />
     </div>
   );
@@ -183,6 +204,69 @@ function CascadingFilters({
 
 /* ---------- Page ---------- */
 export default function MainContent() {
+  // Left states
+  const [leftVersion, setLeftVersion] = React.useState<ApicVersion>("");
+  const [leftEnv, setLeftEnv] = React.useState<Environment>("");
+  const [leftCatalog, setLeftCatalog] = React.useState<Catalog>("");
+  const [leftApi, setLeftApi] = React.useState(""); // holds selected API id
+  const [leftYaml, setLeftYaml] = React.useState("");
+
+  // Right states
+  const [rightVersion, setRightVersion] = React.useState<ApicVersion>("");
+  const [rightEnv, setRightEnv] = React.useState<Environment>("");
+  const [rightCatalog, setRightCatalog] = React.useState<Catalog>("");
+  const [rightApi, setRightApi] = React.useState(""); // holds selected API id
+  const [rightYaml, setRightYaml] = React.useState("");
+
+  // Fetch API list using lifted selections
+  const leftQuery = useApic({ version: leftVersion, environment: leftEnv, catalog: leftCatalog });
+  const rightQuery = useApic({ version: rightVersion, environment: rightEnv, catalog: rightCatalog });
+
+  // Fetch API DETAILS as soon as an ID is chosen (declarative)
+  const leftDetail = useApiDetail(leftApi, true);   // useMock=true for now
+  const rightDetail = useApiDetail(rightApi, true);
+
+  // Cascading resets live *here*
+  const onLeftVersion = (v: ApicVersion) => {
+    setLeftVersion(v);
+    setLeftEnv("");
+    setLeftCatalog("");
+    setLeftApi(""); // clear selected API id
+  };
+  const onLeftEnv = (e: Environment) => {
+    setLeftEnv(e);
+    setLeftCatalog("");
+    setLeftApi("");
+  };
+  const onLeftCatalog = (c: Catalog) => {
+    setLeftCatalog(c);
+    setLeftApi("");
+  };
+
+  const onRightVersion = (v: ApicVersion) => {
+    setRightVersion(v);
+    setRightEnv("");
+    setRightCatalog("");
+    setRightApi("");
+  };
+  const onRightEnv = (e: Environment) => {
+    setRightEnv(e);
+    setRightCatalog("");
+    setRightApi("");
+  };
+  const onRightCatalog = (c: Catalog) => {
+    setRightCatalog(c);
+    setRightApi("");
+  };
+
+  const canCompare =
+    !!leftApi &&
+    !!rightApi &&
+    !leftDetail.isLoading &&
+    !rightDetail.isLoading &&
+    !leftDetail.error &&
+    !rightDetail.error;
+
   return (
     <div className="w-full">
       <section id="editors" aria-labelledby="editors-title" className="space-y-3">
@@ -190,21 +274,82 @@ export default function MainContent() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* LEFT: its own independent filter state */}
-          <CascadingFilters title="Left YAML" idPrefix="left" />
+          <CascadingFilters
+            title="Left YAML"
+            idPrefix="left"
+            apicVersion={leftVersion}
+            environment={leftEnv}
+            catalog={leftCatalog}
+            apiName={leftApi}           // holds id
+            yaml={leftYaml}
+            apis={leftQuery.data as ReadonlyArray<ApiItem> | undefined}
+            isLoading={!!leftQuery.isLoading}
+            error={leftQuery.error}
+            onChangeVersion={onLeftVersion}
+            onChangeEnvironment={onLeftEnv}
+            onChangeCatalog={onLeftCatalog}
+            onChangeApiName={setLeftApi} // sets id
+            onChangeYaml={setLeftYaml}
+          />
 
           {/* RIGHT: a second independent instance (reuses the same component) */}
-          <CascadingFilters title="Right YAML" idPrefix="right" />
+          <CascadingFilters
+            title="Right YAML"
+            idPrefix="right"
+            apicVersion={rightVersion}
+            environment={rightEnv}
+            catalog={rightCatalog}
+            apiName={rightApi}          // holds id
+            yaml={rightYaml}
+            apis={rightQuery.data as ReadonlyArray<ApiItem> | undefined}
+            isLoading={!!rightQuery.isLoading}
+            error={rightQuery.error}
+            onChangeVersion={onRightVersion}
+            onChangeEnvironment={onRightEnv}
+            onChangeCatalog={onRightCatalog}
+            onChangeApiName={setRightApi} // sets id
+            onChangeYaml={setRightYaml}
+          />
         </div>
       </section>
 
-      <section id="actions" aria-labelledby="actions-heading" className="mt-8 flex items-center justify-center">
+      {/* Optional: tiny inline status so users know details are prefetched */}
+      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-500">
+        <div>
+          {leftApi
+            ? leftDetail.isLoading
+              ? "Left: Loading details…"
+              : leftDetail.error
+              ? `Left: ${(leftDetail.error as Error).message}`
+              : `Left: ${leftDetail.data?.info.title} ready`
+            : "Left: no API selected"}
+        </div>
+        <div>
+          {rightApi
+            ? rightDetail.isLoading
+              ? "Right: Loading details…"
+              : rightDetail.error
+              ? `Right: ${(rightDetail.error as Error).message}`
+              : `Right: ${rightDetail.data?.info.title} ready`
+            : "Right: no API selected"}
+        </div>
+      </div>
+
+      <section id="actions" aria-labelledby="actions-heading" className="mt-6 flex items-center justify-center">
         <h2 id="actions-heading" className="sr-only">Actions</h2>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!canCompare}
+            onClick={() => {
+              // Details are already fetched and cached:
+              console.log("LEFT DETAIL", leftDetail.data);
+              console.log("RIGHT DETAIL", rightDetail.data);
+              // TODO: do your diff/compare here
+            }}
           >
-            Compare
+            {canCompare ? "Compare" : "Loading…"}
           </button>
         </div>
       </section>

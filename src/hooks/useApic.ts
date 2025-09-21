@@ -12,12 +12,13 @@ type Filters = {
 
 export function useApic(filters?: Filters) {
   const allChosen = !!filters?.version && !!filters?.environment && !!filters?.catalog;
-  
-  
+
   return useQuery<ApicApi[], Error>({
-    queryKey: ["products", filters?.version, filters?.environment, filters?.catalog],
-    queryFn: ({ signal }) => fetchApicApis(signal),
+    queryKey: ["apis", filters?.version, filters?.environment, filters?.catalog],
+    queryFn: async ({ signal }) => {
+      return fetchApicApis(signal);
+    },
     enabled: allChosen,
-    staleTime: 0, // 60 * 1000 = 1 minute cache, 0 = no staleTime
+    staleTime: 0,
   });
 }
