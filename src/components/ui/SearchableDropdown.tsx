@@ -4,15 +4,18 @@ type Option = { value: string; label: string };
 
 type Props = {
   id?: string;
-  value: string;                                 // '' when none
-  onChange: (next: string) => void;              // option.value or ''
+  value: string;                                   // Controlled value: '' when none
+  onChange: (next: string) => void;                // Emits option.value or ''
   options: ReadonlyArray<Option>;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
-  onClear?: () => void;                          // optional hook on clear
-  filterFn?: (opt: Option, q: string) => boolean;// custom filter
-  renderOption?: (opt: Option, state: { active: boolean; selected: boolean }) => React.ReactNode;
+  onClear?: () => void;                            // Optional hook when cleared
+  filterFn?: (opt: Option, q: string) => boolean;  // Optional custom filter
+  renderOption?: (
+    opt: Option,
+    state: { active: boolean; selected: boolean }
+  ) => React.ReactNode;
 };
 
 const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
@@ -35,35 +38,33 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
     const inputId = id ?? `search-dd-${autoId}`;
     const listboxId = `${inputId}-listbox`;
 
-    // derive selected option
+    // Selected option derived from controlled value
     const selected = React.useMemo(
       () => options.find((o) => o.value === value) ?? null,
       [options, value]
     );
 
-    // local input text; seed from selected label
+    // Local UI state
     const [inputValue, setInputValue] = React.useState(selected?.label ?? "");
     const [open, setOpen] = React.useState(false);
     const [activeIdx, setActiveIdx] = React.useState<number>(-1);
     const [isComposing, setIsComposing] = React.useState(false);
 
-    // ref plumbing
+    // Ref plumbing
     const inputRef = React.useRef<HTMLInputElement>(null);
     React.useImperativeHandle(ref, () => inputRef.current as HTMLInputElement);
 
-    // keep input text synced when parent selection changes (track the whole selected object)
+    // Keep input text in sync with external selection
     React.useEffect(() => {
       setInputValue(selected?.label ?? "");
     }, [selected]);
 
-    // filtering (defer the query for responsiveness)
+    // Filter options (defer query for responsiveness)
     const deferredQuery = React.useDeferredValue(inputValue);
     const filtered = React.useMemo(() => {
       const q = deferredQuery.trim().toLowerCase();
       if (!q) return options;
-
       if (filterFn) return options.filter((o) => filterFn(o, q));
-
       return options.filter(
         (o) =>
           o.label.toLowerCase().includes(q) ||
@@ -71,20 +72,20 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
       );
     }, [options, deferredQuery, filterFn]);
 
-    // open/filtered changes reset activeIdx
+    // Reset active index when list opens or results change
     React.useEffect(() => {
       if (!open) return;
       setActiveIdx(filtered.length ? 0 : -1);
     }, [open, filtered.length]);
 
-    // keep active option scrolled into view
+    // Keep the active item visible as the user navigates
     React.useEffect(() => {
       if (!open || activeIdx < 0) return;
       const el = document.getElementById(`${inputId}-opt-${activeIdx}`);
       el?.scrollIntoView({ block: "nearest" });
     }, [open, activeIdx, inputId]);
 
-    // click/tap/pointer outside to close (better mobile support)
+    // Close on outside pointer down (mobile-friendly)
     const rootRef = React.useRef<HTMLDivElement>(null);
     React.useEffect(() => {
       if (!open) return;
@@ -96,17 +97,27 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
       return () => document.removeEventListener("pointerdown", onDocDown);
     }, [open]);
 
+    // Commit a selection (null = clear)
     const commitSelection = React.useCallback(
       (opt: Option | null) => {
         onChange(opt ? opt.value : "");
-        if (!opt) onClear?.();
-        setInputValue(opt?.label ?? "");
+        if (!opt) {
+          onClear?.();
+          setInputValue("");
+          setOpen(false);
+          // Remove focus when clearing
+          requestAnimationFrame(() => inputRef.current?.blur());
+          return;
+        }
+        // Keep focus after choosing an option (preserves your current UX)
+        setInputValue(opt.label);
         setOpen(false);
         inputRef.current?.focus();
       },
       [onChange, onClear]
     );
 
+    // Keyboard interactions (a11y + power-user flows)
     const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (disabled || isComposing) return;
 
@@ -153,23 +164,27 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
           break;
         }
         case "Tab": {
-          // Optional convenience: commit active on Tab when open
+          // Optional: commit active on Tab when open
           if (open && activeIdx >= 0 && activeIdx < filtered.length) {
             commitSelection(filtered[activeIdx]);
           }
           break;
         }
         case "Escape": {
+          e.preventDefault();
           if (open) {
-            e.preventDefault();
             setOpen(false);
           } else if (inputValue) {
             setInputValue("");
+            onChange?.(""); // propagate clear (optional)
+            onClear?.();    // notify clear (optional)
           }
+          // Always blur on Escape
+          requestAnimationFrame(() => inputRef.current?.blur());
           break;
         }
         case "Backspace": {
-          // if query is empty AND we have a selection, clear it
+          // If query is empty but a selection exists, clear it
           if (inputValue === "" && value !== "") {
             e.preventDefault();
             commitSelection(null);
@@ -179,7 +194,7 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
       }
     };
 
-    // IME-safe events
+    // IME composition (don’t handle keys mid-composition)
     const onCompositionStart = () => setIsComposing(true);
     const onCompositionEnd = () => setIsComposing(false);
 
@@ -216,7 +231,7 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
               open && activeIdx >= 0 ? `${inputId}-opt-${activeIdx}` : undefined
             }
             className={[
-              "w-full outline-none text-sm placeholder-gray-400 bg-transparent",
+              "w-full bg-transparent text-sm placeholder-gray-400 outline-none",
               disabled ? "cursor-not-allowed" : "",
             ].join(" ")}
             placeholder={placeholder}
@@ -225,7 +240,7 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
             disabled={disabled}
             onFocus={handleInputFocus}
             onBlur={(e) => {
-              // if next focus is inside listbox, keep open (click selection)
+              // Keep open if the next focus target is a listbox option (click selection)
               const next = e.relatedTarget as HTMLElement | null;
               if (next && next.dataset.role === "search-dd-option") return;
               setOpen(false);
@@ -237,16 +252,20 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
             onKeyDown={onKeyDown}
             onCompositionStart={onCompositionStart}
             onCompositionEnd={onCompositionEnd}
+            inputMode="search"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
           />
 
-          {/* Clear button (visible when selected and input mirrors label) */}
+          {/* Clear button (shown when a selection exists and input mirrors its label) */}
           {!disabled && value && inputValue === (selected?.label ?? "") && (
             <button
               type="button"
               className="rounded-md px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-100"
               aria-label="Clear selection"
               title="Clear"
-              onMouseDown={(e) => e.preventDefault()} // keep focus
+              onMouseDown={(e) => e.preventDefault()} // Avoid losing focus before click
               onClick={() => commitSelection(null)}
             >
               ×
@@ -254,7 +273,7 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
           )}
         </div>
 
-        {/* Options popover */}
+        {/* Options popup */}
         {open && !disabled && (
           <ul
             id={listboxId}
@@ -263,10 +282,12 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
           >
             {filtered.length === 0 ? (
               <li
-                className="px-3 py-2 text-sm text-gray-500 select-none"
+                className="select-none px-3 py-2 text-sm text-gray-500"
                 aria-disabled="true"
               >
-                <span role="status" aria-live="polite">No results</span>
+                <span role="status" aria-live="polite">
+                  No results
+                </span>
               </li>
             ) : (
               filtered.map((opt, idx) => {
@@ -281,12 +302,12 @@ const SearchableDropdown = React.forwardRef<HTMLInputElement, Props>(
                     tabIndex={-1}
                     data-role="search-dd-option"
                     className={[
-                      "px-3 py-2 text-sm cursor-pointer focus:outline-none",
+                      "cursor-pointer px-3 py-2 text-sm focus:outline-none",
                       active ? "bg-indigo-50" : "",
                       isSelected ? "font-medium" : "font-normal",
                     ].join(" ")}
                     onMouseEnter={() => setActiveIdx(idx)}
-                    onMouseDown={(e) => e.preventDefault()} // prevent blur
+                    onMouseDown={(e) => e.preventDefault()} // Prevent input blur before click
                     onClick={() => commitSelection(opt)}
                   >
                     {renderOption
